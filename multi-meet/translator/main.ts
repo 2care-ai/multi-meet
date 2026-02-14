@@ -9,6 +9,7 @@ import {
   AudioSource,
   LocalAudioTrack,
   RoomEvent,
+  TrackPublishOptions,
   type TextStreamReader,
 } from "@livekit/rtc-node";
 import {
@@ -108,7 +109,7 @@ export default defineAgent({
     await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
 
     if (ctx.room.localParticipant) {
-      await ctx.room.localParticipant.publishTrack(hindiTrack, {});
+      await ctx.room.localParticipant.publishTrack(hindiTrack, new TrackPublishOptions({}));
     }
 
     await new Promise<void>((resolve) => {

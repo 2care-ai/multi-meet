@@ -2,14 +2,15 @@
   "name": "multi-meet",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.1.38",
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "transcriber:dev": "bunx tsx transcriber/main.ts dev",
-    "transcriber:download-files": "bunx tsx transcriber/main.ts download-files",
-    "translator:dev": "bunx tsx translator/main.ts dev"
+    "transcriber:dev": "bun transcriber/main.ts dev",
+    "transcriber:download-files": "bun transcriber/main.ts download-files",
+    "translator:dev": "bun translator/main.ts dev"
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",
