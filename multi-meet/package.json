@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "transcriber:dev": "bunx tsx transcriber/main.ts dev",
-    "transcriber:download-files": "bunx tsx transcriber/main.ts download-files"
+    "transcriber:download-files": "bunx tsx transcriber/main.ts download-files",
+    "translator:dev": "bunx tsx translator/main.ts dev"
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",

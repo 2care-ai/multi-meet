@@ -7,6 +7,7 @@ import { RoomAgentDispatch, RoomConfiguration } from "@livekit/protocol";
 import { err, ok, type Result } from "neverthrow";
 
 const TRANSCRIBER_AGENT_NAME = "transcriber";
+const TRANSLATOR_AGENT_NAME = "translator";
 
 function livekitUrlToHttp(wssUrl: string): string {
   return wssUrl.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
@@ -71,6 +72,7 @@ export async function createToken(
     at.roomConfig = new RoomConfiguration({
       agents: [
         new RoomAgentDispatch({ agentName: TRANSCRIBER_AGENT_NAME }),
+        new RoomAgentDispatch({ agentName: TRANSLATOR_AGENT_NAME }),
       ],
     });
     const token = await at.toJwt();
