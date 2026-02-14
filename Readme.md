@@ -45,6 +45,10 @@ We keep the **base language of the stream as English** (transcript + optional tr
 
 ![Pub-Sub stream: participants publish STT and subscribe to TTS in their language; Agent + SIP handle session and the stream.](multi-meet/public/image.png)
 
+**Realtime activity:** Pre-emptive STT → LLM processing (transcript/translation) is published to the stream; participants subscribe by User ID and configured language so everyone gets content in their preferred language with low latency.
+
+![Preemptive generation: speech period → final transcript → STT/LLM pipeline → publish to stream; subscribe by User ID and language.](multi-meet/public/preemptive%20generation.png)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Browser (Next.js)                                                       │
