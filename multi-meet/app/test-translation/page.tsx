@@ -385,134 +385,266 @@ function TranslationRoomUI({ roomName }: { roomName: string }) {
     router.push("/test-translation");
   }, [roomName, router]);
 
-  const speakingSet = new Set(speakingParticipants.map((p) => p.identity));
-  const activeIdentity = speakingParticipants.length > 0
-    ? speakingParticipants[0]?.identity
-    : lastSpeakerIdentity;
+  const activeIdentity =
+    speakingParticipants.length > 0
+      ? speakingParticipants[0]?.identity
+      : lastSpeakerIdentity;
+
+  const resetCaptions = useCallback(() => {
+    setCaptionByIdentity({});
+    setLastSpeakerIdentity(null);
+  }, []);
+
+  const taglineLabels = LANGUAGE_OPTIONS.map((o) => o.label).join(" • ");
 
   return (
-    <div className="flex flex-1 flex-col min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-        <h1 className="text-lg font-semibold">{roomName}</h1>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
-            Caption language
-            <select
-              value={captionLanguage}
-              onChange={(e) => setCaptionLanguage(e.target.value as "en" | "hi" | "ta")}
-              className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-zinc-100 text-sm"
-            >
-              {LANGUAGE_OPTIONS.map(({ code, label }) => (
-                <option key={code} value={code}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={handleLeave}
-            className="text-sm text-zinc-400 hover:text-zinc-200"
-          >
-            Leave
-          </button>
-        </div>
+    <div
+      className="min-h-screen text-white p-5 md:p-8"
+      style={{
+        background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+        fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+      }}
+    >
+      <header className="text-center mb-10">
+        <h1
+          className="text-4xl md:text-5xl font-extrabold mb-2"
+          style={{
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            WebkitBackgroundClip: "text",
+            backgroundClip: "text",
+            color: "transparent",
+          }}
+        >
+          Moonshot
+        </h1>
+        <p className="text-lg text-zinc-400 font-light tracking-wide">
+          Real-Time Multilingual Meeting • {taglineLabels}
+        </p>
       </header>
 
-      <div className="flex-1 overflow-auto p-4">
-        <div className="flex flex-wrap gap-4 justify-center">
-          {participants.map((p) => {
+      <div className="max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+        {(() => {
+          const AGENT_ID = "__agent__";
+          type ParticipantSlot = (typeof participants)[number] | { type: "agent" };
+          const withAgent: ParticipantSlot[] = [
+            participants[0],
+            { type: "agent" },
+            participants[1],
+          ].filter(Boolean) as ParticipantSlot[];
+          function isAgent(slot: ParticipantSlot): slot is { type: "agent" } {
+            return typeof slot === "object" && slot !== null && "type" in slot && slot.type === "agent";
+          }
+          return withAgent.map((item) => {
+            if (isAgent(item)) {
+              const caption = captionByIdentity[AGENT_ID];
+              const translated = caption
+                ? caption.translations[captionLanguage] ?? caption.transcript
+                : "";
+              return (
+                <div
+                  key={AGENT_ID}
+                  className="rounded-2xl p-6 border-2 border-transparent transition-all duration-300 relative overflow-hidden bg-white/5 backdrop-blur-md border-violet-500/50"
+                >
+                  <div className="relative z-10">
+                    <div
+                      className="w-[90px] h-[90px] rounded-full mx-auto mb-5 flex items-center justify-center text-4xl shadow-lg"
+                      style={{
+                        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        boxShadow: "0 8px 20px rgba(0,0,0,0.3)",
+                      }}
+                    >
+                      A
+                    </div>
+                    <div className="text-center mb-5">
+                      <div className="font-bold text-xl mb-1">Agent</div>
+                      <div className="text-zinc-400 text-sm mb-0.5">AI Assistant</div>
+                      <div className="text-[#667eea] text-sm font-semibold">—</div>
+                    </div>
+                    <div className="bg-black/30 rounded-xl p-4 min-h-[120px]">
+                      <div className="text-green-500 font-semibold text-[15px] mb-3 leading-relaxed min-h-[40px]">
+                        {caption ? caption.transcript : ""}
+                      </div>
+                      <div className="text-zinc-300 text-sm leading-relaxed italic min-h-[40px]">
+                        {caption && translated && translated !== caption.transcript ? (
+                          <>
+                            <span className="opacity-60">🌐 </span>
+                            {translated}
+                          </>
+                        ) : null}
+                      </div>
+                      {!caption && (
+                        <p className="text-zinc-500 text-sm italic">Agent responses will appear here.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            const p = item as (typeof participants)[number];
             const name = p.name ?? p.identity;
             const initial = name.slice(0, 1).toUpperCase();
             const caption = captionByIdentity[p.identity];
-            const isActive = p.identity === activeIdentity;
+            const isSpeaking = p.identity === activeIdentity;
+            const isTranslating = p.isLocal && processing;
             const sourceLabel = caption
               ? LANGUAGE_OPTIONS.find((o) => o.code === caption.sourceLang)?.label ?? caption.sourceLang
               : "—";
-            const translated = caption ? caption.translations[captionLanguage] ?? caption.transcript : "";
+            const translated = caption
+              ? caption.translations[captionLanguage] ?? caption.transcript
+              : "";
 
             return (
               <div
                 key={p.identity}
-                className={`w-full max-w-sm rounded-xl border-2 bg-zinc-900 p-4 transition-shadow ${
-                  isActive
-                    ? "border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.3)]"
-                    : "border-zinc-700"
-                }`}
+                className={`
+                  rounded-2xl p-6 border-2 transition-all duration-300 relative overflow-hidden
+                  bg-white/5 backdrop-blur-md
+                  ${isSpeaking ? "border-green-500 scale-[1.02] shadow-[0_0_30px_rgba(76,175,80,0.6)]" : "border-transparent"}
+                  ${isTranslating ? "border-amber-500 animate-pulse shadow-[0_0_20px_rgba(255,152,0,0.4)]" : ""}
+                `}
+                style={
+                  isSpeaking
+                    ? {
+                        boxShadow: "0 0 30px rgba(76, 175, 80, 0.6)",
+                      }
+                    : undefined
+                }
               >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 text-lg font-semibold">
+                <div
+                  className="absolute inset-0 transition-opacity duration-300 pointer-events-none rounded-2xl"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)",
+                    opacity: isSpeaking ? 1 : 0,
+                  }}
+                />
+                <div className="relative z-10">
+                  <div
+                    className="w-[90px] h-[90px] rounded-full mx-auto mb-5 flex items-center justify-center text-4xl shadow-lg"
+                    style={{
+                      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                      boxShadow: "0 8px 20px rgba(0,0,0,0.3)",
+                    }}
+                  >
                     {initial}
                   </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-white truncate">{name}</p>
+                  <div className="text-center mb-5">
+                    <div className="font-bold text-xl mb-1">{name}</div>
                     {p.isLocal && (
-                      <span className="text-xs text-zinc-400">You</span>
+                      <div className="text-zinc-400 text-sm mb-0.5">You</div>
                     )}
-                    <p className="text-xs text-zinc-500">Speaks: {sourceLabel}</p>
+                    <div className="text-[#667eea] text-sm font-semibold">
+                      {sourceLabel !== "—" ? `Speaks: ${sourceLabel}` : "—"}
+                    </div>
                   </div>
-                </div>
-                <div className="rounded-lg bg-zinc-800 p-3 min-h-[4rem]">
-                  {caption ? (
-                    <>
-                      <p className="text-sm text-emerald-400 mb-1.5">{caption.transcript}</p>
-                      {translated && translated !== caption.transcript && (
-                        <p className="text-sm text-zinc-400 flex items-start gap-1.5">
-                          <span className="shrink-0 w-4 h-4 rounded-full bg-sky-500/30 inline-block mt-0.5" />
+                  <div className="bg-black/30 rounded-xl p-4 min-h-[120px]">
+                    <div className="text-green-500 font-semibold text-[15px] mb-3 leading-relaxed min-h-[40px]">
+                      {caption ? caption.transcript : ""}
+                    </div>
+                    <div className="text-zinc-300 text-sm leading-relaxed italic min-h-[40px]">
+                      {caption && translated && translated !== caption.transcript ? (
+                        <>
+                          <span className="opacity-60">🌐 </span>
                           {translated}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-zinc-500 italic">No caption yet</p>
-                  )}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               </div>
             );
-          })}
-        </div>
+          });
+        })()}
       </div>
 
-      <footer className="border-t border-zinc-800 px-4 py-4 flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-sm text-zinc-400">
-          I speak
+      <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
+        <label className="flex items-center gap-2 text-zinc-300 text-sm">
+          Caption language
           <select
-            value={sourceLang}
-            onChange={(e) => setSourceLang(e.target.value)}
-            disabled={isSpeaking}
-            className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-zinc-100 text-sm disabled:opacity-50"
+            value={captionLanguage}
+            onChange={(e) => setCaptionLanguage(e.target.value as "en" | "hi" | "ta")}
+            className="rounded-lg bg-white/10 border border-white/20 px-3 py-2 text-white text-sm"
           >
             {LANGUAGE_OPTIONS.map(({ code, label }) => (
-              <option key={code} value={code}>
+              <option key={code} value={code} className="bg-zinc-800 text-white">
                 {label}
               </option>
             ))}
           </select>
         </label>
-        {errorMessage && (
-          <span className="text-sm text-red-400">{errorMessage}</span>
-        )}
-        {isSpeaking && processing && (
-          <span className="text-sm text-amber-400">Processing…</span>
-        )}
+        <label className="flex items-center gap-2 text-zinc-300 text-sm">
+          I speak
+          <select
+            value={sourceLang}
+            onChange={(e) => setSourceLang(e.target.value)}
+            disabled={isSpeaking}
+            className="rounded-lg bg-white/10 border border-white/20 px-3 py-2 text-white text-sm disabled:opacity-50"
+          >
+            {LANGUAGE_OPTIONS.map(({ code, label }) => (
+              <option key={code} value={code} className="bg-zinc-800 text-white">
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
         {!isSpeaking ? (
           <button
             type="button"
             onClick={startSpeaking}
-            className="rounded-lg bg-green-600 px-4 py-2 font-medium text-white hover:bg-green-500"
+            className="rounded-full px-10 py-4 text-lg font-semibold text-white border-0 cursor-pointer transition-all hover:-translate-y-0.5 shadow-lg"
+            style={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              boxShadow: "0 4px 15px rgba(102, 126, 234, 0.4)",
+            }}
           >
-            Unmute
+            Start speaking
           </button>
         ) : (
           <button
             type="button"
             onClick={stopSpeaking}
-            className="rounded-lg bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-500"
+            className="rounded-full px-10 py-4 text-lg font-semibold text-white bg-red-600 border-0 cursor-pointer transition-all hover:-translate-y-0.5"
           >
-            Mute
+            Stop
           </button>
         )}
-      </footer>
+        <button
+          type="button"
+          onClick={resetCaptions}
+          className="fixed top-5 right-5 z-[1000] rounded-full px-4 py-2 text-xs font-semibold text-white border-0 cursor-pointer"
+          style={{
+            background: "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+            boxShadow: "0 4px 15px rgba(245, 87, 108, 0.4)",
+          }}
+        >
+          Reset captions
+        </button>
+        <button
+          type="button"
+          onClick={handleLeave}
+          className="rounded-full px-6 py-2 text-sm text-zinc-300 hover:text-white border border-white/20"
+        >
+          Leave
+        </button>
+      </div>
+
+      {(errorMessage || (isSpeaking && processing)) && (
+        <div
+          className={`max-w-2xl mx-auto text-center text-lg font-semibold py-4 px-4 rounded-xl min-h-[50px] flex items-center justify-center ${
+            errorMessage ? "bg-red-500/10 border border-red-500/30 text-red-400" : "bg-amber-500/10 border border-amber-500/30 text-amber-500"
+          }`}
+        >
+          {errorMessage ? (
+            errorMessage
+          ) : (
+            <>
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 mr-2 animate-pulse"
+              />
+              Processing…
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
