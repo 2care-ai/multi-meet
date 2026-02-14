@@ -25,8 +25,15 @@ import { synthesizeSpeechPcm } from "../lib/elevenlabs-tts";
 
 const TRANSLATOR_AGENT_NAME = "translator";
 const TRANSCRIPTION_TOPIC = "lk.transcription";
+const TRANSLATION_TOPIC = "lk.translation";
 const SOURCE_LANG = "en";
 const TARGET_LANG = "hi";
+
+function getTargetLangs(): string[] {
+  const raw = process.env.TRANSLATION_TARGET_LANGS;
+  if (!raw?.trim()) return [TARGET_LANG];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
 const SAMPLE_RATE = 24_000;
 const NUM_CHANNELS = 1;
 const SAMPLES_PER_FRAME_20MS = (SAMPLE_RATE * 20) / 1000;
@@ -83,13 +90,37 @@ export default defineAgent({
         try {
           const text = (await reader.readAll()) as string;
           if (!text?.trim()) return;
+          const speakerIdentity = participantInfo.identity;
+          const targetLangs = getTargetLangs();
+          const primaryLang = targetLangs[0] ?? TARGET_LANG;
           const translated = await translateText(
             text.trim(),
             SOURCE_LANG,
-            TARGET_LANG,
+            primaryLang,
             geminiKey
           );
           if (translated.isErr()) return;
+          if (ctx.room.localParticipant) {
+            await ctx.room.localParticipant.sendText(translated.value, {
+              topic: TRANSLATION_TOPIC,
+              attributes: {
+                "lk.translation_lang": primaryLang,
+                "lk.translation_speaker": speakerIdentity,
+              },
+            });
+          }
+          for (const lang of targetLangs.slice(1)) {
+            const extra = await translateText(text.trim(), SOURCE_LANG, lang, geminiKey);
+            if (extra.isOk() && ctx.room.localParticipant) {
+              await ctx.room.localParticipant.sendText(extra.value, {
+                topic: TRANSLATION_TOPIC,
+                attributes: {
+                  "lk.translation_lang": lang,
+                  "lk.translation_speaker": speakerIdentity,
+                },
+              });
+            }
+          }
           const tts = await synthesizeSpeechPcm(translated.value, apiKey);
           if (tts.isErr()) return;
           const frames = pcmToAudioFrames(
