@@ -3,18 +3,33 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "transcriber:dev": "bunx tsx transcriber/main.ts dev",
+    "transcriber:download-files": "bunx tsx transcriber/main.ts download-files"
   },
   "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
+    "@livekit/agents": "^1.0.44",
+    "@livekit/agents-plugin-livekit": "^1.x",
+    "@livekit/agents-plugin-silero": "^1.x",
+    "@livekit/components-react": "^2.9.19",
+    "@livekit/protocol": "^1.43.0",
+    "@upstash/redis": "^1.36.2",
+    "livekit-client": "^2.17.1",
+    "livekit-server-sdk": "^2.15.0",
+    "nanoid": "^5.1.6",
+    "neverthrow": "^8.2.0",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "tsx": "^4.19.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
