@@ -1,7 +1,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const MODEL_ID = "gemini-3-flash";
+const MODEL_ID = "gemini-2.5-flash";
 
 export async function translateText(
   text: string,
