@@ -1,85 +1,141 @@
-# Multi-Meet — Audio-Only LiveKit Rooms
+# Multi-Meet — Real-time multilingual audio rooms
 
-User-only (no agent) audio rooms: create a room, share the link, others join and talk. Your speech is shown as live transcript in the browser.
-
----
-
-## What’s Implemented
-
-### 1. **Room creation and join (LiveKit)**
-- **Landing page (`/`)**: Enter your name → “Create room” creates a LiveKit room via the [Room Service API](https://docs.livekit.io/intro/basics/rooms-participants-tracks/rooms/) and redirects you to `/room/[roomName]`. Optional “Join a room” section: enter room name + your name → get a token and go to that room.
-- **Room page (`/room/[roomName]`)**: If you have no token (e.g. opened the shared link), you see “Enter your name” and “Join”. After joining, you’re in the LiveKit room (audio only, no video).
-- **In the room**: Participant list, mic mute/unmute, “Leave” to go home. All participants hear each other via LiveKit.
-
-### 2. **Token storage (Redis / Upstash)**
-- On create or join, the server issues a LiveKit access token and **stores it in Upstash Redis** (key: `lk_token:{roomName}:{identity}`, TTL 1 hour).
-- The client still receives the token in the API response and keeps it in `sessionStorage` for the current tab. Redis is used for server-side persistence (e.g. future rejoin-by-code or server checks).
-
-### 3. **Transcription (LiveKit native + transcriber agent)**
-- Transcriptions are **not** done in the Next.js app. A **transcription agent** (in this repo under `transcriber/`) joins the room when a participant connects: participant tokens include **RoomAgentDispatch** so LiveKit dispatches the `transcriber` agent to the room. The agent runs STT only (no LLM, no TTS), publishes to **`lk.transcription`**, and the frontend **consumes** them.
-- The room UI uses **`useTranscriptions()`** ([React hook](https://docs.livekit.io/reference/components/react/hook/usetranscriptions/)) to read from the **`lk.transcription`** text stream. It also subscribes to **`RoomEvent.TranscriptionReceived`** and logs each segment: `[room/ROOMNAME] Name: text`.
-- **Run the transcriber** so transcriptions appear: from the app folder (`multi-meet/`), run `bun run transcriber:download-files` once, then `bun run transcriber:dev`. It uses the same `.env` as the app. Without the transcriber process running, the transcript area shows: *“Transcriptions appear when a transcription agent is in the room.”*
-- The **creator** is the first local participant: they enter their name on the landing page before “Create room”; that name is on the LiveKit token and in the participant list (and in transcript lines when the agent sends participant identity/name).
-
-### 4. **Speaking state logs (LiveKit)**
-- **LiveKit** exposes **voice activity** per participant: the server does VAD and sets `participant.isSpeaking`.
-- The app subscribes to **`ParticipantEvent.IsSpeakingChanged`** on the local participant and all remote participants (and on **`RoomEvent.ParticipantConnected`** for new joiners).
-- When someone starts or stops speaking, the console logs: **`[room/ROOMNAME] DisplayName is speaking`** or **`DisplayName stopped speaking`**.
+**Hackathon project:** Break the language barrier in live audio meetings. People across India speak in their own regional language; the room keeps a single **base language (English)** in the stream and an **AI agent** translates in low latency using **Gemini 2.5 Flash**, so everyone can participate without language being a barrier.
 
 ---
 
-## Tech Stack
+## Problem: multi-lingual barrier in India
 
-- **App**: Next.js 16 (App Router), React 19, Tailwind.
-- **LiveKit**: `livekit-server-sdk` (create room + token), `@livekit/components-react` + `livekit-client` (room UI, audio only).
-- **Redis**: `@upstash/redis` (REST) for token storage.
-- **Conventions**: neverthrow for server results; no raw SQL.
+India has hundreds of languages and dialects. In remote meetings, webinars, and community calls, participants often can’t follow when others speak in a different language. Forcing everyone to speak one language excludes people who are more comfortable in their mother tongue. We wanted:
+
+- **One shared “stream” language** (English) so the meeting has a single reference.
+- **Speak in your own language** — Hindi, Tamil, Telugu, Bengali, or any supported language.
+- **Low-latency translation** so the room feels live, not delayed.
+- **No extra burden on participants** — an agent does the work in the background.
 
 ---
 
-## Env Vars (in `multi-meet/.env`)
+## Solution: agent-driven room streaming + Gemini translation
 
-Required for rooms and Redis:
+We use **LiveKit** for real-time audio rooms and two **agents** that run in the cloud:
+
+1. **Transcriber agent** — Listens to each participant’s audio, runs **speech-to-text (STT)**, and publishes a **live transcript** into the room. The transcript is the “base” layer: we treat **English** as the canonical language in the stream (transcript + translated output).
+2. **Translator agent** — Subscribes to that transcript stream, sends each **final** segment to **Gemini 2.5 Flash** for translation (e.g. regional language → English, or English → Hindi), then uses **ElevenLabs TTS** to synthesize speech and **publishes a live audio track** in the same room. Everyone hears the original mic plus the translated track, so the room is not a barrier to anyone.
+
+**Flow in short:**  
+*Participant speaks (e.g. Hindi) → STT (transcript) → Gemini translates (e.g. Hindi → English) → TTS (English audio) → published as a track in the room. Others see transcript in English and hear the translated track.*
+
+We keep the **base language of the stream as English** (transcript + optional translated track), while allowing people to **talk in their regional language**; the agent handles translation in **low latency** using **Gemini 2.5 Flash**, so the room stays inclusive and real-time.
+
+---
+
+## What’s implemented
+
+- **Room creation and join (LiveKit)** — Create a room from the landing page, share the link; others join by name. Audio-only; no video.
+- **Token storage (Redis / Upstash)** — Tokens stored server-side for persistence (e.g. rejoin).
+- **Transcription** — A **transcriber agent** is dispatched per room (via token). It runs STT only (e.g. Deepgram via LiveKit Inference), publishes to **`lk.transcription`**. The UI shows a live transcript (participant name + text).
+- **Translation** — A **translator agent** subscribes to **`lk.transcription`**, translates each final segment with **Gemini 2.5 Flash**, synthesizes speech with **ElevenLabs TTS**, and publishes a **live audio track** (e.g. Hindi) in the room. Participants hear it via the same room audio (no extra UI).
+- **Speaking state** — LiveKit voice activity; console logs when someone is speaking / stopped.
+
+---
+
+## Technical overview
+
+### Architecture
+
+![Pub-Sub stream: participants publish STT and subscribe to TTS in their language; Agent + SIP handle session and the stream.](multi-meet/public/image.png)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Browser (Next.js)                                                       │
+│  - Create / join room, get token                                         │
+│  - LiveKit room: publish mic, subscribe to audio + lk.transcription     │
+│  - UI: participant list, transcript (useTranscriptions), RoomAudioRenderer│
+└─────────────────────────────────────────────────────────────────────────┘
+                    │ token (RoomAgentDispatch: transcriber, translator)
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LiveKit Cloud                                                           │
+│  - Room: participants + agents                                           │
+│  - transcriber agent: subscribe participant audio → STT → lk.transcription│
+│  - translator agent: subscribe lk.transcription → Gemini → TTS → track   │
+└─────────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  External APIs                                                           │
+│  - LiveKit Inference (e.g. Deepgram Nova-3) for STT                      │
+│  - Gemini 2.5 Flash (generativelanguage.googleapis.com) for translation  │
+│  - ElevenLabs for TTS (PCM 24kHz for agent track)                        │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Base language in the stream:** Transcript and translated content are treated as **English** (or a single target language) so the “meeting stream” is consistent; participants can speak in any supported regional language.
+- **Low latency:** Gemini 2.5 Flash is used for fast translation of short segments; transcriber emits final segments so the translator runs per phrase, not per full recording.
+
+### Data flow (translation)
+
+1. Participant speaks → **Transcriber** gets audio, runs STT, publishes to **`lk.transcription`** (with `lk.transcription_final` for final segments).
+2. **Translator** registers a handler on **`lk.transcription`**. On each **final** segment: read text → **Gemini 2.5 Flash** (translate, e.g. regional → English or en → hi) → **ElevenLabs TTS** (PCM 24 kHz) → chunk into 20 ms frames → **AudioSource** → **LocalAudioTrack** published in the room.
+3. All participants **subscribe** to that track; **RoomAudioRenderer** plays it with the rest of the room audio.
+
+### Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| App | Next.js 16 (App Router), React 19, Tailwind |
+| Real-time | LiveKit (`livekit-server-sdk`, `@livekit/components-react`, `livekit-client`), audio-only |
+| Storage | Upstash Redis (REST) for token persistence |
+| STT | LiveKit Inference (e.g. Deepgram Nova-3) in transcriber agent |
+| Translation | Gemini 2.5 Flash (`generativelanguage.googleapis.com`) |
+| TTS | ElevenLabs (MP3 for batch API; PCM 24 kHz for translator agent) |
+| Conventions | neverthrow for server actions; Drizzle where applicable; no raw SQL |
+
+### Repo layout (main pieces)
+
+| Path | Role |
+|------|------|
+| `multi-meet/app/page.tsx` | Landing: name, Create room, Join room |
+| `multi-meet/app/room/[roomName]/page.tsx` | Room page wrapper |
+| `multi-meet/components/audio-room.tsx` | LiveKit room UI, transcript (useTranscriptions), RoomAudioRenderer |
+| `multi-meet/app/api/room/create/route.ts` | Create room, issue token, store in Redis |
+| `multi-meet/app/api/room/join/route.ts` | Join room, issue token, store in Redis |
+| `multi-meet/lib/livekit.ts` | createRoom, createToken; RoomAgentDispatch for transcriber + translator |
+| `multi-meet/lib/gemini-translate.ts` | translateText (Gemini 2.5 Flash) |
+| `multi-meet/lib/elevenlabs-tts.ts` | synthesizeSpeech (MP3), synthesizeSpeechPcm (PCM for agent) |
+| `multi-meet/transcriber/main.ts` | Transcriber agent: one session per participant, STT → lk.transcription |
+| `multi-meet/translator/main.ts` | Translator agent: lk.transcription → Gemini → TTS → publish Hindi (or other) track |
+| `multi-meet/docs/TRANSLATION-STREAM-PLAN.md` | Translation stream and pub/sub design |
+
+---
+
+## Environment variables (`multi-meet/.env`)
+
+**Required for rooms and Redis:**
 
 | Variable | Purpose |
 |----------|--------|
-| `LIVEKIT_URL` | LiveKit server URL for **server** SDK (e.g. `wss://xxx.livekit.cloud`) |
+| `LIVEKIT_URL` | LiveKit server URL (e.g. `wss://xxx.livekit.cloud`) |
 | `LIVEKIT_API_KEY` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | LiveKit API secret |
-| `NEXT_PUBLIC_LIVEKIT_URL` | Same LiveKit URL for **browser** (must match server) |
-| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL (e.g. `https://xxx.upstash.io`) |
+| `NEXT_PUBLIC_LIVEKIT_URL` | Same LiveKit URL for browser |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL (optional; tokens still work without it) |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token |
 
-If `UPSTASH_REDIS_REST_*` is missing, create/join still work; tokens just aren’t stored in Redis.
-
-### Transcriber agent
-
-Uses the same `.env` as the app (same LiveKit credentials). With **LiveKit Cloud**, STT uses LiveKit Inference (Deepgram Nova-3); no extra keys. For self-hosted or your own Deepgram, you may need a Deepgram plugin and `DEEPGRAM_API_KEY`.
-
-### Translation agent (Hindi TTS)
-
-The **translator** agent subscribes to the room’s **`lk.transcription`** stream, translates each final segment (e.g. en→hi) with **Gemini**, synthesizes Hindi speech with **ElevenLabs TTS**, and **publishes** a live audio track in the room. Participants hear the translated Hindi via **RoomAudioRenderer** (same as other mics). Requires in `.env`:
+**Translator agent (multi-lingual output):**
 
 | Variable | Purpose |
 |----------|--------|
-| `ELEVEN_API_KEY` | ElevenLabs API key (STT/TTS for translation pipeline and translator) |
-| `GEMINI_API_KEY` | Gemini API key (translation) |
+| `GEMINI_API_KEY` | Gemini API key (translation via Gemini 2.5 Flash) |
+| `ELEVEN_API_KEY` | ElevenLabs API key (TTS for translated track) |
 
-Run with: `bun run translator:dev` from `multi-meet/`. Both **transcriber** and **translator** must be running for live transcript + Hindi output.
-
----
-
-## How LiveKit transcription works
-
-1. **Dispatch**: When a participant joins, their token includes **RoomAgentDispatch** for the `transcriber` agent. LiveKit assigns an idle transcriber worker to that room.
-2. **Publisher**: The **transcriber agent** (STT only, no TTS/LLM) subscribes to participant audio, runs STT (e.g. Deepgram via LiveKit Inference), and **publishes** transcriptions on **`lk.transcription`**; the **sender identity** is the participant who was transcribed.
-3. **Subscriber**: The frontend uses **`useTranscriptions()`** to **receive** those transcriptions and show them in the UI.
+Transcriber uses LiveKit (and LiveKit Inference for STT); no extra keys for basic setup.
 
 ---
 
-## How to Run
+## How to run
 
-**App (required):**
+**1. App**
 
 ```bash
 cd multi-meet
@@ -87,73 +143,37 @@ bun install
 bun run dev
 ```
 
-Open **http://localhost:3000**.
+Open **http://localhost:3000** (or the URL shown; dev server listens on `0.0.0.0` for LAN access).
 
-**Transcriber (required for live transcript in the UI):**
+**2. Transcriber (required for live transcript)**
 
-From the same `multi-meet/` folder (after `bun install`):
+From `multi-meet/`:
 
 ```bash
-bun run transcriber:download-files
+bun run transcriber:download-files   # once
 bun run transcriber:dev
 ```
 
-Keep the transcriber process running; it will join rooms when participants connect (dispatched via the token).
+**3. Translator (required for translated audio track)**
 
-**Translator (optional, for Hindi TTS in the room):**
-
-From the same `multi-meet/` folder, with `ELEVEN_API_KEY` and `GEMINI_API_KEY` set:
+From `multi-meet/`, with `GEMINI_API_KEY` and `ELEVEN_API_KEY` set:
 
 ```bash
 bun run translator:dev
 ```
 
-Participants will hear the translated Hindi on the same room audio (one extra track). Run transcriber + translator together for transcript + Hindi.
+Run app + transcriber + translator together for full flow: live transcript + translated track so the room is not a barrier for multi-lingual participants.
 
 ---
 
-## How to Test
+## How to test
 
-### Create and join (two participants)
-
-1. **Tab 1 (host)**  
-   - Go to http://localhost:3000.  
-   - Enter a name (e.g. “Alice”), click **Create room**.  
-   - You’re redirected to `/room/XXXXXXXXXX`.  
-   - Copy the **full URL** from the address bar (e.g. `http://localhost:3000/room/C2FZAEYX0L`).
-
-2. **Tab 2 (guest)**  
-   - Open the copied URL in a new tab (or another browser/device on the same network).  
-   - You see “Join room: …” and a name field.  
-   - Enter a name (e.g. “Bob”), click **Join**.  
-   - You enter the same room.
-
-3. **In both tabs**  
-   - You should see each other in the participant list.  
-   - Unmute (mic on) and speak; both should hear each other.  
-   - Use **Leave** or close the tab to exit.
-
-### Transcriptions and logs
-
-1. **Without the transcriber**: If the `transcriber` worker is not running, the room shows *“Transcriptions appear when a transcription agent is in the room.”* Speaking logs still work: open the **browser console** (F12) and you’ll see **`Name is speaking`** / **`Name stopped speaking`** when anyone talks.  
-2. **With the transcriber**: Run the transcriber (`bun run transcriber:dev` from `multi-meet/`). Create or join a room; the transcriber is dispatched when you connect. The **“Transcript (LiveKit)”** section will show **`Name: text`** and the console will log **`[room/ROOMNAME] Name: text`** for each segment.
-
-### Redis (optional)
-
-- With `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` set, create or join a room once.  
-- In the Upstash dashboard, open the Redis browser and check for keys like `lk_token:XXXXXXXXXX:Name-xxxxxx`; they expire after 1 hour.
+1. **Tab 1:** Open the app → enter name → **Create room** → copy room URL.
+2. **Tab 2 (or another device on LAN):** Open URL → enter name → **Join**.
+3. In both: unmute and speak. Transcript appears when the transcriber is running; translated track is heard when the translator is running (same room audio).
 
 ---
 
-## Main Files
+## Summary
 
-| Path | Role |
-|------|------|
-| `app/page.tsx` | Landing: name, Create room, Join room form |
-| `app/room/[roomName]/page.tsx` | Room page wrapper |
-| `components/audio-room.tsx` | Join form or LiveKit room UI + useTranscriptions + speaking logs |
-| `app/api/room/create/route.ts` | POST create room, issue token, store in Redis |
-| `app/api/room/join/route.ts` | POST issue token for room, store in Redis |
-| `lib/livekit.ts` | createRoom, createToken (with RoomAgentDispatch for transcriber) |
-| `lib/redis.ts` | setToken, getToken (Upstash Redis REST) |
-| `transcriber/main.ts` | Transcriber agent (STT only); dispatched to rooms via token |
+Multi-Meet uses **room streaming** with a **fixed base language (English)** in the transcript and translated output. Participants can **speak in their regional language**; the **transcriber** turns speech into text and the **translator** uses **Gemini 2.5 Flash** for **low-latency translation** plus ElevenLabs TTS, publishing a live audio track in the room. That keeps the room **inclusive** and **language no longer a barrier** for hackathon demos and real-world meetings in India.
